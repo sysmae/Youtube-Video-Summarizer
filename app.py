@@ -48,13 +48,13 @@ with st.sidebar:
     
     output_format = st.radio(
         "출력 형식",
-        ("텍스트", "마크다운", "HTML")
+        ("텍스트", "마크다운")
     )
     
     st.markdown("---")
     st.markdown("### 정보")
     st.markdown("이 앱은 YouTube 비디오의 트랜스크립트를 AI를 사용하여 상세 노트로 변환합니다.")
-    # st.markdown("[GitHub 저장소](https://github.com/HimanshuGitCode/Youtube-Video-Summarizer)")
+    st.markdown("[GitHub 저장소](https://github.com/sysmae/Youtube-Video-Summarizer)")
 
 # 유튜브 ID 추출 함수
 def extract_video_id(youtube_url):
@@ -280,9 +280,6 @@ if st.button("상세 노트 생성", type="primary"):
                 elif output_format == "마크다운":
                     st.markdown("## 상세 노트:")
                     st.markdown(summary)
-                else:  # HTML
-                    st.markdown("## 상세 노트:")
-                    st.markdown(summary, unsafe_allow_html=True)
                 
                 # 다운로드 버튼
                 st.download_button(
@@ -298,7 +295,7 @@ st.markdown(
     """
     <div style="text-align: center">
      <p style="font-size: 14px; color: gray;">이 앱은 Google Gemini API를 사용하여 YouTube 비디오의 트랜스크립트를 요약합니다.</p>
-        <p style="font-size: 14px; color: gray;">중앙대 오픈소스포로젝트 용 입니다.</p>
+        <p style="font-size: 14px; color: gray;">중앙대 오픈소스프로젝트 용 입니다.</p>
     </div>
     """,
     unsafe_allow_html=True
