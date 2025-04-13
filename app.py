@@ -6,6 +6,13 @@ from youtube_transcript_api import YouTubeTranscriptApi
 import re
 import time
 
+# 페이지 설정을 가장 먼저 호출
+st.set_page_config(
+    page_title="YouTube 트랜스크립트 변환기",
+    page_icon="🎬",
+    layout="wide"
+)
+
 # 환경 변수 로드
 load_dotenv()
 
@@ -15,14 +22,29 @@ if not api_key:
     st.error("GOOGLE_API_KEY가 설정되지 않았습니다. .env 파일에 API 키를 추가해주세요.")
     st.stop()
 
-genai.configure(api_key=api_key)
+# Webshare 프록시 설정 (선택적)
+try:
+    from youtube_transcript_api.proxies import WebshareProxyConfig
+    
+    proxy_username = os.getenv("WEBSHARE_USERNAME")
+    proxy_password = os.getenv("WEBSHARE_PASSWORD")
 
-# 페이지 설정
-st.set_page_config(
-    page_title="YouTube 트랜스크립트 변환기",
-    page_icon="🎬",
-    layout="wide"
-)
+    if proxy_username and proxy_password:
+        proxy_config = WebshareProxyConfig(
+            proxy_username=proxy_username,
+            proxy_password=proxy_password
+        )
+        st.success("Webshare 프록시가 활성화되었습니다. YouTube IP 차단을 우회할 수 있습니다.")
+    else:
+        proxy_config = None
+        st.warning("프록시 자격 증명이 설정되지 않았습니다. YouTube API 요청이 차단될 수 있습니다.")
+except ImportError:
+    proxy_config = None
+    st.warning("Webshare 프록시 모듈을 가져올 수 없습니다. 프록시 없이 실행됩니다.")
+
+
+
+genai.configure(api_key=api_key)
 
 # 사이드바 설정
 with st.sidebar:
@@ -64,6 +86,39 @@ def extract_video_id(youtube_url):
         return match.group(1)
     return None
 
+# 트랜스크립트 API 초기화 (프록시 적용)
+def get_transcript_api():
+    if proxy_config:
+        return YouTubeTranscriptApi(proxy_config=proxy_config)
+    else:
+        return YouTubeTranscriptApi()
+
+# 자동 재시도 메커니즘이 포함된 트랜스크립트 목록 가져오기 함수
+def get_transcript_list_with_retry(video_id, max_retries=3, delay=2):
+    for attempt in range(max_retries):
+        try:
+            if proxy_config:
+                api = get_transcript_api()
+                transcript_list = api.list_transcripts(video_id)
+            else:
+                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            return transcript_list, None
+        except Exception as e:
+            error_str = str(e)
+            if "RequestBlocked" in error_str or "IpBlocked" in error_str:
+                if attempt < max_retries - 1:
+                    error_msg = f"YouTube 요청이 차단되었습니다. {delay}초 후 재시도합니다... (시도 {attempt+1}/{max_retries})"
+                    st.warning(error_msg)
+                    time.sleep(delay)
+                    # 지수 백오프 - 재시도 간격을 점점 늘림
+                    delay *= 1.5
+                else:
+                    return None, error_str
+            else:
+                return None, error_str
+    
+    return None, "최대 재시도 횟수를 초과했습니다."
+
 # 트랜스크립트 추출 함수 (개선된 버전)
 def extract_transcript_details(youtube_video_url, selected_language_code=None):
     try:
@@ -71,8 +126,10 @@ def extract_transcript_details(youtube_video_url, selected_language_code=None):
         if not video_id:
             return None, "올바른 YouTube URL을 입력해주세요."
         
-        # 사용 가능한 자막 목록 확인
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        # 사용 가능한 자막 목록 확인 (재시도 메커니즘 적용)
+        transcript_list, error = get_transcript_list_with_retry(video_id)
+        if error:
+            return None, f"트랜스크립트를 가져오는 중 오류가 발생했습니다: {error}"
         
         # 선택된 언어 코드가 있는 경우 해당 언어로 자막 가져오기
         if selected_language_code:
@@ -116,13 +173,20 @@ def extract_transcript_details(youtube_video_url, selected_language_code=None):
         # 수정된 부분: FetchedTranscriptSnippet 객체에서 텍스트 추출
         transcript_text = " "
         for snippet in transcript_data:
-            transcript_text += " " + snippet.text
+            # 객체 속성 접근 방식 시도
+            try:
+                transcript_text += " " + snippet.text
+            except AttributeError:
+                # 딕셔너리 접근 방식 시도 (이전 버전 호환성)
+                try:
+                    transcript_text += " " + snippet["text"]
+                except (TypeError, KeyError):
+                    return None, "자막 데이터 형식을 처리할 수 없습니다."
             
         return transcript_text, None
         
     except Exception as e:
         return None, f"트랜스크립트를 가져오는 중 오류가 발생했습니다: {str(e)}"
-
 
 # 요약 생성 함수
 def generate_gemini_content(transcript_text, prompt, model_name):
@@ -136,7 +200,10 @@ def generate_gemini_content(transcript_text, prompt, model_name):
 # 자막 언어 목록 가져오기 함수
 def get_available_transcripts(video_id):
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        # 프록시를 사용하여 트랜스크립트 목록 가져오기 (재시도 메커니즘 적용)
+        transcript_list, error = get_transcript_list_with_retry(video_id)
+        if error:
+            return None, None, error
         
         manual_transcripts = []
         generated_transcripts = []
@@ -180,7 +247,8 @@ if youtube_link:
             st.markdown("이 비디오의 트랜스크립트를 분석하여 상세 노트를 생성합니다.")
             
             # 자막 정보 가져오기
-            manual_transcripts, generated_transcripts, error = get_available_transcripts(video_id)
+            with st.spinner("자막 정보를 가져오는 중..."):
+                manual_transcripts, generated_transcripts, error = get_available_transcripts(video_id)
             
             if error:
                 st.error(f"자막 정보를 가져오는 중 오류가 발생했습니다: {error}")
