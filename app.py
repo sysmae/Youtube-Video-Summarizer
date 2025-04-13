@@ -25,6 +25,7 @@ if not api_key:
 # Webshare 프록시 설정 (선택적)
 try:
     from youtube_transcript_api.proxies import WebshareProxyConfig
+    from youtube_transcript_api import YouTubeTranscriptApi
     
     proxy_username = os.getenv("WEBSHARE_USERNAME")
     proxy_password = os.getenv("WEBSHARE_PASSWORD")
@@ -34,7 +35,13 @@ try:
             proxy_username=proxy_username,
             proxy_password=proxy_password
         )
-        st.success("Webshare 프록시가 활성화되었습니다. YouTube IP 차단을 우회할 수 있습니다.")
+        # 프록시 연결 테스트
+        try:
+            test_api = YouTubeTranscriptApi(proxy_config=proxy_config)
+            st.success("Webshare 프록시가 활성화되었습니다. YouTube IP 차단을 우회할 수 있습니다.")
+        except Exception as e:
+            st.error(f"프록시 연결 테스트 실패: {str(e)}")
+            proxy_config = None
     else:
         proxy_config = None
         st.warning("프록시 자격 증명이 설정되지 않았습니다. YouTube API 요청이 차단될 수 있습니다.")
@@ -93,15 +100,13 @@ def get_transcript_api():
     else:
         return YouTubeTranscriptApi()
 
+
 # 자동 재시도 메커니즘이 포함된 트랜스크립트 목록 가져오기 함수
 def get_transcript_list_with_retry(video_id, max_retries=3, delay=2):
     for attempt in range(max_retries):
         try:
-            if proxy_config:
-                api = get_transcript_api()
-                transcript_list = api.list_transcripts(video_id)
-            else:
-                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            api = get_transcript_api()
+            transcript_list = api.list_transcripts(video_id)
             return transcript_list, None
         except Exception as e:
             error_str = str(e)
@@ -118,6 +123,7 @@ def get_transcript_list_with_retry(video_id, max_retries=3, delay=2):
                 return None, error_str
     
     return None, "최대 재시도 횟수를 초과했습니다."
+
 
 # 트랜스크립트 추출 함수 (개선된 버전)
 def extract_transcript_details(youtube_video_url, selected_language_code=None):
